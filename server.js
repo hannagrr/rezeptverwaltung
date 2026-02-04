@@ -12,18 +12,20 @@ const USE_WEBDAV = process.env.WEBDAV_URL && process.env.WEBDAV_URL.length > 0;
 
 let webdavClient = null;
 if (USE_WEBDAV) {
-    webdavClient.getDirectoryContents('/Rezeptverwaltung')
-        .then(() => console.log('WebDAV Verbindung OK'))
-        .catch(err => {
-            console.error('WebDAV FEHLER:', err.message);
-            process.exit(1);
-        });
+    webdavClient.getDirectoryContents('/Apps')
+    .then(list => {
+        console.log(
+          'Apps enthält:',
+          list.map(e => e.basename)
+        );
+    })
+    .catch(console.error);
 }
 
 // Für WebDAV: klare, explizite DAV-Pfade
-const REZEPTE_FILE = '/Rezeptverwaltung/rezepte.json';
-const TO_BE_COOKED_FILE = '/Rezeptverwaltung/to_be_cooked.json';
-const TO_BE_BOUGHT_FILE = '/Rezeptverwaltung/to_be_bought.json';
+const REZEPTE_FILE = '/Apps/Rezeptverwaltung/rezepte.json';
+const TO_BE_COOKED_FILE = '/Apps/Rezeptverwaltung/to_be_cooked.json';
+const TO_BE_BOUGHT_FILE = '/Apps/Rezeptverwaltung/to_be_bought.json';
 
 
 // ---------- Datei-Hilfsfunktionen (mit WebDAV Support) ----------
