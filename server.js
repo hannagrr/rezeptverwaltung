@@ -2,21 +2,46 @@ const http = require('http');
 const fs = require('fs').promises;
 const path = require('path');
 const url = require('url');
-require('dotenv').config(); // Lädt die .env-Datei, falls vorhanden
 
-const PORT = process.env.PORT || 3000; // Port aus Umgebungsvariablen oder Standardwert 3000
+require('dotenv').config();
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data'); // Datenverzeichnis aus Umgebungsvariablen
-const REZEPTE_FILE = path.join(DATA_DIR, process.env.REZEPTE_FILE || 'rezepte.json'); // Datei für Rezepte
-const TO_BE_COOKED_FILE = path.join(DATA_DIR, process.env.TO_BE_COOKED_FILE || 'to_be_cooked.json'); // Datei für geplante Rezepte
-const TO_BE_BOUGHT_FILE = path.join(DATA_DIR, process.env.TO_BE_BOUGHT_FILE || 'to_be_bought.json'); // Datei für Einkaufsliste
+const PORT = process.env.PORT || 3000;
 
+// Prüfe ob WebDAV (Koofr) verwendet wird
+const USE_WEBDAV = process.env.WEBDAV_URL && process.env.WEBDAV_URL.length > 0;
 
-// ---------- Datei-Hilfsfunktionen ----------
+let webdavClient = null;
+if (USE_WEBDAV) {
+    // WebDAV Client wird nur geladen wenn benötigt
+    const { createClient } = require('webdav');
+    webdavClient = createClient(
+        process.env.WEBDAV_URL,
+        {
+            username: process.env.WEBDAV_USERNAME,
+            password: process.env.WEBDAV_PASSWORD
+        }
+    );
+}
+
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const REZEPTE_FILE = path.join(DATA_DIR, process.env.REZEPTE_FILE || 'rezepte.json');
+const TO_BE_COOKED_FILE = path.join(DATA_DIR, process.env.TO_BE_COOKED_FILE || 'to_be_cooked.json');
+const TO_BE_BOUGHT_FILE = path.join(DATA_DIR, process.env.TO_BE_BOUGHT_FILE || 'to_be_bought.json');
+
+// ---------- Datei-Hilfsfunktionen (mit WebDAV Support) ----------
 
 async function readJSON(filepath) {
     try {
-        const data = await fs.readFile(filepath, 'utf8');
+        let data;
+        if (USE_WEBDAV) {
+            // Lese von Koofr via WebDAV
+            const relativePath = filepath.replace(DATA_DIR, '').replace(/^\//, '');
+            data = await webdavClient.getFileContents(relativePath, { format: 'text' });
+        } else {
+            // Lese lokal
+            data = await fs.readFile(filepath, 'utf8');
+        }
+        
         const parsed = JSON.parse(data);
         if (filepath === REZEPTE_FILE) {
             let rezepte = parsed.rezepte || parsed;
@@ -28,13 +53,22 @@ async function readJSON(filepath) {
         }
         return Array.isArray(parsed) ? parsed : [];
     } catch (error) {
-        if (error.code === 'ENOENT') return [];
+        if (error.code === 'ENOENT' || error.status === 404) return [];
         throw error;
     }
 }
 
 async function writeJSON(filepath, data) {
-    await fs.writeFile(filepath, JSON.stringify(data, null, 2), 'utf8');
+    const content = JSON.stringify(data, null, 2);
+    
+    if (USE_WEBDAV) {
+        // Schreibe zu Koofr via WebDAV
+        const relativePath = filepath.replace(DATA_DIR, '').replace(/^\//, '');
+        await webdavClient.putFileContents(relativePath, content, { overwrite: true });
+    } else {
+        // Schreibe lokal
+        await fs.writeFile(filepath, content, 'utf8');
+    }
 }
 
 // ---------- Zutaten-Logik ----------
@@ -84,7 +118,6 @@ function expandIngredients(toBeBought) {
         const baseName = z.baseName || z.name;
         if (z.rezeptIds && z.rezeptIds.length > 0) {
             z.rezeptIds.forEach((id, idx) => {
-                // Menge aus amounts wiederherstellen falls vorhanden
                 const amount = (z.amounts && z.amounts[idx]) || '';
                 expanded.push({
                     name: amount ? amount + ' ' + baseName : baseName,
@@ -102,7 +135,10 @@ function expandIngredients(toBeBought) {
 // ---------- HTTP-Infrastruktur ----------
 
 async function ensureDataDir() {
-    await fs.mkdir(DATA_DIR, { recursive: true });
+    if (!USE_WEBDAV) {
+        await fs.mkdir(DATA_DIR, { recursive: true });
+    }
+    // Für WebDAV: Verzeichnis sollte in Koofr bereits existieren
 }
 
 function setCORS(res) {
@@ -176,7 +212,7 @@ const server = http.createServer(async (req, res) => {
             sendJSON(res, await readJSON(TO_BE_BOUGHT_FILE));
         }
 
-        // POST /api/to-be-cooked  –  Rezept hinzufügen
+        // POST /api/to-be-cooked
         else if (pathname === '/api/to-be-cooked' && method === 'POST') {
             const rezept = await getRequestBody(req);
             const toBeCooked = await readJSON(TO_BE_COOKED_FILE);
@@ -194,31 +230,26 @@ const server = http.createServer(async (req, res) => {
             sendJSON(res, { success: true });
         }
 
-        // DELETE /api/to-be-cooked/:id  –  Rezept löschen
-        // Gibt { alreadyBoughtIngredients } zurück: Zutaten aus dem Rezept die NICHT MEHR in toBeBought sind
+        // DELETE /api/to-be-cooked/:id
         else if (pathname.startsWith('/api/to-be-cooked/') && method === 'DELETE') {
             const rezeptId = parseInt(pathname.split('/').pop());
             const toBeCooked = await readJSON(TO_BE_COOKED_FILE);
             const toBeBought = await readJSON(TO_BE_BOUGHT_FILE);
 
-            // Finde das zu löschende Rezept
             const rezeptToDelete = toBeCooked.find(r => r.id === rezeptId);
             
             await writeJSON(TO_BE_COOKED_FILE, toBeCooked.filter(r => r.id !== rezeptId));
 
-            // Sammle alle Zutaten-BaseNames die aktuell in toBeBought sind
             const currentBoughtBaseNames = new Set(
                 toBeBought.map(z => (z.baseName || z.name).toLowerCase())
             );
 
-            // Finde Zutaten aus dem gelöschten Rezept die NICHT MEHR in toBeBought sind
             const alreadyBought = [];
             if (rezeptToDelete && rezeptToDelete.zutaten) {
                 rezeptToDelete.zutaten.forEach(zutatStr => {
                     const parsed = parseIngredient(zutatStr);
                     const baseName = parsed.name.toLowerCase();
                     if (!currentBoughtBaseNames.has(baseName)) {
-                        // Diese Zutat war im Rezept, ist aber nicht mehr in toBeBought
                         alreadyBought.push({
                             name: zutatStr,
                             baseName: parsed.name,
@@ -229,7 +260,6 @@ const server = http.createServer(async (req, res) => {
                 });
             }
 
-            // Entferne rezeptId aus allen Zutaten in toBeBought und re-merge
             const bleiben = [];
             toBeBought.forEach(z => {
                 const ids = z.rezeptIds || [];
@@ -241,7 +271,6 @@ const server = http.createServer(async (req, res) => {
                     ids.forEach((id, idx) => { if (id !== rezeptId) bleibendeNames.push((z.rezeptNames || [])[idx]); });
                     bleiben.push({ ...z, rezeptIds: bleibendeIds, rezeptNames: bleibendeNames });
                 }
-                // Wenn bleibendeIds.length === 0: komplett entfernen (keine anderen Rezepte)
             });
 
             const merged = mergeIngredients(expandIngredients(bleiben));
@@ -250,7 +279,7 @@ const server = http.createServer(async (req, res) => {
             sendJSON(res, { success: true, alreadyBoughtIngredients: alreadyBought });
         }
 
-        // POST /api/to-be-bought  –  Zutat manuell hinzufügen
+        // POST /api/to-be-bought
         else if (pathname === '/api/to-be-bought' && method === 'POST') {
             const zutat = await getRequestBody(req);
             const toBeBought = await readJSON(TO_BE_BOUGHT_FILE);
@@ -259,7 +288,7 @@ const server = http.createServer(async (req, res) => {
             sendJSON(res, { success: true });
         }
 
-        // DELETE /api/to-be-bought/:index  –  einzelne Zutat löschen
+        // DELETE /api/to-be-bought/:index
         else if (pathname.startsWith('/api/to-be-bought/') && method === 'DELETE') {
             const index = parseInt(pathname.split('/').pop());
             const toBeBought = await readJSON(TO_BE_BOUGHT_FILE);
@@ -268,7 +297,7 @@ const server = http.createServer(async (req, res) => {
             sendJSON(res, { success: true });
         }
 
-        // PUT /api/to-be-bought/:index  –  Zutat bearbeiten (Menge ändern)
+        // PUT /api/to-be-bought/:index
         else if (pathname.startsWith('/api/to-be-bought/') && method === 'PUT') {
             const index = parseInt(pathname.split('/').pop());
             const { newName } = await getRequestBody(req);
@@ -293,7 +322,13 @@ const server = http.createServer(async (req, res) => {
 
 async function startServer() {
     await ensureDataDir();
-    server.listen(PORT, () => console.log(`Server läuft auf http://localhost:${PORT}`));
+    server.listen(PORT, () => {
+        console.log(`Server läuft auf http://localhost:${PORT}`);
+        console.log(`WebDAV aktiv: ${USE_WEBDAV}`);
+        if (USE_WEBDAV) {
+            console.log(`WebDAV URL: ${process.env.WEBDAV_URL}`);
+        }
+    });
 }
 
 startServer();
