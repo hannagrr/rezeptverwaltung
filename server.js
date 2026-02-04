@@ -12,21 +12,19 @@ const USE_WEBDAV = process.env.WEBDAV_URL && process.env.WEBDAV_URL.length > 0;
 
 let webdavClient = null;
 if (USE_WEBDAV) {
-    // WebDAV Client wird nur geladen wenn benötigt
-    const { createClient } = require('webdav');
-    webdavClient = createClient(
-        process.env.WEBDAV_URL,
-        {
-            username: process.env.WEBDAV_USERNAME,
-            password: process.env.WEBDAV_PASSWORD
-        }
-    );
+    webdavClient.getDirectoryContents('/Rezeptverwaltung')
+        .then(() => console.log('WebDAV Verbindung OK'))
+        .catch(err => {
+            console.error('WebDAV FEHLER:', err.message);
+            process.exit(1);
+        });
 }
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-const REZEPTE_FILE = path.join(DATA_DIR, process.env.REZEPTE_FILE || 'rezepte.json');
-const TO_BE_COOKED_FILE = path.join(DATA_DIR, process.env.TO_BE_COOKED_FILE || 'to_be_cooked.json');
-const TO_BE_BOUGHT_FILE = path.join(DATA_DIR, process.env.TO_BE_BOUGHT_FILE || 'to_be_bought.json');
+// Für WebDAV: klare, explizite DAV-Pfade
+const REZEPTE_FILE = '/Rezeptverwaltung/rezepte.json';
+const TO_BE_COOKED_FILE = '/Rezeptverwaltung/to_be_cooked.json';
+const TO_BE_BOUGHT_FILE = '/Rezeptverwaltung/to_be_bought.json';
+
 
 // ---------- Datei-Hilfsfunktionen (mit WebDAV Support) ----------
 
@@ -35,8 +33,7 @@ async function readJSON(filepath) {
         let data;
         if (USE_WEBDAV) {
             // Lese von Koofr via WebDAV
-            const relativePath = filepath.replace(DATA_DIR, '').replace(/^\//, '');
-            data = await webdavClient.getFileContents(relativePath, { format: 'text' });
+            data = await webdavClient.getFileContents(filepath, { format: 'text' });
         } else {
             // Lese lokal
             data = await fs.readFile(filepath, 'utf8');
@@ -63,8 +60,7 @@ async function writeJSON(filepath, data) {
     
     if (USE_WEBDAV) {
         // Schreibe zu Koofr via WebDAV
-        const relativePath = filepath.replace(DATA_DIR, '').replace(/^\//, '');
-        await webdavClient.putFileContents(relativePath, content, { overwrite: true });
+        await webdavClient.putFileContents(filepath, content, { overwrite: true });
     } else {
         // Schreibe lokal
         await fs.writeFile(filepath, content, 'utf8');
@@ -133,13 +129,6 @@ function expandIngredients(toBeBought) {
 }
 
 // ---------- HTTP-Infrastruktur ----------
-
-async function ensureDataDir() {
-    if (!USE_WEBDAV) {
-        await fs.mkdir(DATA_DIR, { recursive: true });
-    }
-    // Für WebDAV: Verzeichnis sollte in Koofr bereits existieren
-}
 
 function setCORS(res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -320,15 +309,7 @@ const server = http.createServer(async (req, res) => {
     }
 });
 
-async function startServer() {
-    await ensureDataDir();
-    server.listen(PORT, () => {
-        console.log(`Server läuft auf http://localhost:${PORT}`);
-        console.log(`WebDAV aktiv: ${USE_WEBDAV}`);
-        if (USE_WEBDAV) {
-            console.log(`WebDAV URL: ${process.env.WEBDAV_URL}`);
-        }
-    });
-}
-
-startServer();
+server.listen(PORT, () => {
+    console.log(`Server läuft auf Port ${PORT}`);
+    console.log(`WebDAV aktiv: ${USE_WEBDAV}`);
+});
