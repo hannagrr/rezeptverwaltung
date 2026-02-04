@@ -2,13 +2,15 @@ const http = require('http');
 const fs = require('fs').promises;
 const path = require('path');
 const url = require('url');
+require('dotenv').config(); // Lädt die .env-Datei, falls vorhanden
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000; // Port aus Umgebungsvariablen oder Standardwert 3000
 
-const DATA_DIR = path.join(__dirname, 'data');
-const REZEPTE_FILE = path.join(DATA_DIR, 'rezepte.json');
-const TO_BE_COOKED_FILE = path.join(DATA_DIR, 'to_be_cooked.json');
-const TO_BE_BOUGHT_FILE = path.join(DATA_DIR, 'to_be_bought.json');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data'); // Datenverzeichnis aus Umgebungsvariablen
+const REZEPTE_FILE = path.join(DATA_DIR, process.env.REZEPTE_FILE || 'rezepte.json'); // Datei für Rezepte
+const TO_BE_COOKED_FILE = path.join(DATA_DIR, process.env.TO_BE_COOKED_FILE || 'to_be_cooked.json'); // Datei für geplante Rezepte
+const TO_BE_BOUGHT_FILE = path.join(DATA_DIR, process.env.TO_BE_BOUGHT_FILE || 'to_be_bought.json'); // Datei für Einkaufsliste
+
 
 // ---------- Datei-Hilfsfunktionen ----------
 
