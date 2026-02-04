@@ -142,7 +142,7 @@ const server = http.createServer(async (req, res) => {
     try {
         // Statische Dateien: index.html + Bilder aus images/
         if (pathname === '/' || pathname === '/index.html') {
-            const html = await fs.readFile(path.join(__dirname, 'public', 'index.html'));
+            const html = await fs.readFile(path.join(__dirname, 'index.html'));
             res.writeHead(200, { 'Content-Type': 'text/html' });
             res.end(html);
             return;
