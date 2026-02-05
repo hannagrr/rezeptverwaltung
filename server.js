@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs').promises;
 const path = require('path');
 const url = require('url');
+const { createClient } = require("webdav");
 
 require('dotenv').config();
 
@@ -11,15 +12,21 @@ const PORT = process.env.PORT || 3000;
 const USE_WEBDAV = process.env.WEBDAV_URL && process.env.WEBDAV_URL.length > 0;
 
 let webdavClient = null;
+
 if (USE_WEBDAV) {
-    webdavClient.getDirectoryContents('/Apps')
-    .then(list => {
-        console.log(
-          'Apps enthält:',
-          list.map(e => e.basename)
-        );
-    })
-    .catch(console.error);
+    console.log("Verbinde zu WebDAV...");
+    webdavClient = createClient(
+        process.env.WEBDAV_URL,
+        {
+            username: process.env.KOOFR_USER,
+            password: process.env.KOOFR_PASS
+        }
+    );
+    
+    // Test-Abruf (optional, zum Prüfen)
+    webdavClient.getDirectoryContents('/')
+        .then(() => console.log("WebDAV Verbindung erfolgreich!"))
+        .catch(e => console.error("WebDAV Verbindungsfehler:", e));
 }
 
 // Für WebDAV: klare, explizite DAV-Pfade
