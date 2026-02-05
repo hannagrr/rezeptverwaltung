@@ -30,10 +30,9 @@ if (USE_WEBDAV) {
 }
 
 // Für WebDAV: klare, explizite DAV-Pfade
-const REZEPTE_FILE = '/Apps/Rezeptverwaltung/rezepte.json';
-const TO_BE_COOKED_FILE = '/Apps/Rezeptverwaltung/to_be_cooked.json';
-const TO_BE_BOUGHT_FILE = '/Apps/Rezeptverwaltung/to_be_bought.json';
-
+const REZEPTE_FILE = '/rezepte.json';
+const TO_BE_COOKED_FILE = '/to_be_cooked.json';
+const TO_BE_BOUGHT_FILE = '/to_be_bought.json';
 
 // ---------- Datei-Hilfsfunktionen (mit WebDAV Support) ----------
 
